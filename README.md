@@ -1,97 +1,117 @@
-# Arch Security Updates Monitor
+# AUM — Arch Updates Monitor
 
-This project now supports a secure server-client model:
+A Flask dashboard that aggregates Arch Linux package update status from multiple machines in one place. Security-related packages are highlighted in red so they are never missed.
 
-- Server: Flask dashboard and secure ingestion API
-- Clients: report their local update status to the server
-- Dashboard: shows local + remote node status on one page
-
-Security tagging is based on `arch-audit` output and matched against packages from `checkupdates`.
+- **Server**: Flask web dashboard and secure report ingestion API
+- **Clients**: each Arch machine runs `client.py` and reports its update status every minute
+- **Dashboard**: shows all nodes in one table; clicking a node's security badge expands the affected packages
+- Security tagging uses `arch-audit` output cross-referenced against pending updates from `checkupdates`
 
 ## Requirements
 
-- Arch Linux
+- Arch Linux (server and clients)
 - Python 3.10+
-- `pacman-contrib` (for `checkupdates`)
-- `arch-audit` (for vulnerability/security package detection)
-
-Install required system tools:
+- `pacman-contrib` (provides `checkupdates`)
+- `arch-audit` (CVE/advisory detection)
 
 ```bash
 sudo pacman -Syu pacman-contrib arch-audit
 ```
 
-## Setup
+## Server Setup
 
 ```bash
-cd /home/iwery/security
+git clone https://github.com/micaelATwh3e/AUM---Arch-Updates-Monitor.git
+cd AUM---Arch-Updates-Monitor
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-## Server Configuration (Secure)
-
-Set these environment variables on the server:
-
-```bash
-export SECURITY_API_TOKENS="token-node-a,token-node-b"
-export SECURITY_HMAC_SECRET="replace-with-long-random-secret"
-export SECURITY_ALLOWED_SKEW_SECONDS=300
-export SECURITY_LOCAL_NODE_ID="main-server"
-export SECURITY_STATUS_DB="data/node_status.db"
-```
-
-Security model for client reports:
-
-- bearer token authentication (`Authorization: Bearer ...`)
-- HMAC-SHA256 request signatures (`X-Signature`)
-- signed timestamp validation (`X-Timestamp`)
-- replay protection (older/out-of-order signed reports are rejected)
-
-Recommended hardening:
-
-- run behind HTTPS reverse proxy (nginx/caddy)
-- restrict inbound access to trusted networks/VPN
-- rotate API tokens and HMAC secret periodically
-
-## Run
-
-```bash
 python app.py
 ```
 
-Open:
+Open `http://127.0.0.1:55000`.
 
-```text
-http://127.0.0.1:55000
-```
+### Optional environment variables
 
-## Client Reporting
+| Variable | Default | Description |
+|---|---|---|
+| `SECURITY_LOCAL_NODE_ID` | hostname | Identity shown for the server node |
+| `SECURITY_STATUS_DB` | `data/node_status.db` | Path to the SQLite database |
+| `SECURITY_ALLOWED_SKEW_SECONDS` | `300` | Max clock drift allowed for client reports |
 
-On each client installation, set:
+### Security model
 
-```bash
-export SECURITY_SERVER_URL="https://your-server.example.com/api/node-report"
-export SECURITY_API_TOKEN="token-node-a"
-export SECURITY_HMAC_SECRET="same-secret-as-server"
-export SECURITY_NODE_ID="laptop-arch"
-```
+Client reports are authenticated with two independent controls:
 
-Send one report:
+- **Bearer token** — unique per client, stored as a SHA-256 hash in the DB
+- **HMAC-SHA256 signature** — signs `timestamp + body`; unique secret per client
+- **Timestamp window** — replays and out-of-order reports are rejected
+
+Recommended hardening: run behind an HTTPS reverse proxy (nginx, Caddy) and restrict access to trusted networks or a VPN.
+
+## Adding a Client Node
+
+**1. On the client machine — first run:**
 
 ```bash
 python client.py
 ```
 
-Suggested schedule (every 10 minutes):
+The script generates a unique token and HMAC secret, saves them to `~/.config/aum-client.env` (mode `600`), and prints them:
+
+```
+==============================================================
+ AUM CLIENT — FIRST RUN SETUP
+==============================================================
+   Node ID    : laptop-arch
+   API Token  : 4a9f...
+   HMAC Secret: d8c1...
+   Server URL : http://127.0.0.1:55000/api/node-report
+==============================================================
+```
+
+Edit `~/.config/aum-client.env` to set the correct `SECURITY_SERVER_URL` before continuing.
+
+**2. On the server — register the token (no restart needed):**
 
 ```bash
-*/10 * * * * cd /home/iwery/security && /home/iwery/security/.venv/bin/python client.py
+python app.py add-token --token <token> --secret <hmac-secret> --label laptop-arch
+```
+
+**3. The client will then report every 60 seconds automatically.**
+
+### Client environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `SECURITY_SERVER_URL` | `http://127.0.0.1:55000/api/node-report` | Server endpoint |
+| `SECURITY_API_TOKEN` | *(generated)* | Bearer token |
+| `SECURITY_HMAC_SECRET` | *(generated)* | HMAC signing secret |
+| `SECURITY_NODE_ID` | hostname | Node label shown in dashboard |
+| `SECURITY_REPORT_INTERVAL` | `60` | Seconds between reports (minimum 10) |
+| `SECURITY_CLIENT_CONFIG` | `~/.config/aum-client.env` | Config file path |
+
+### Running the client as a systemd service
+
+```ini
+# ~/.config/systemd/user/aum-client.service
+[Unit]
+Description=AUM security update reporter
+
+[Service]
+ExecStart=/path/to/.venv/bin/python /path/to/client.py
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user enable --now aum-client
 ```
 
 ## Notes
 
-- If `checkupdates` or `arch-audit` is missing, the page will show a warning.
-- The app only reads update/advisory info; it does not install updates.
-- If `checkupdates` fails due to missing `fakeroot`, it automatically falls back to `pacman -Qu`.
+- `checkupdates` requires `fakeroot` (from `base-devel`). If missing, the client falls back to `pacman -Qu` automatically.
+- The app and client only read package info — they do not install or modify anything.
+- The token database (`data/`) and client config (`~/.config/aum-client.env`) are excluded from git via `.gitignore`.
