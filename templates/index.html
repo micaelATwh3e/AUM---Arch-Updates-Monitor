@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Arch Updates Monitor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <h1>AUM</h1>
+        <span>Arch Updates Monitor</span>
+      </div>
+      <nav>
+        <a class="active" href="/">Dashboard</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="card">
+          <h2>System update control center</h2>
+          <p>Track package updates and keep security fixes visible so they never get missed.</p>
+          <div class="hero-actions">
+            <a class="button" href="/">Refresh now</a>
+            <span class="badge idle">Checked {{ checked_at }}</span>
+          </div>
+        </div>
+        <div class="grid">
+          <div class="stat">
+            <span>Nodes online</span>
+            <strong>{{ node_count }}</strong>
+          </div>
+          <div class="stat">
+            <span>Nodes at risk</span>
+            <strong>{{ nodes_with_security }}</strong>
+          </div>
+          <div class="stat">
+            <span>Stale reports</span>
+            <strong>{{ stale_nodes }}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <h3>Client Node Status</h3>
+          <span class="badge warn">{{ node_count }} total nodes</span>
+        </div>
+        {% if node_reports %}
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Node</th>
+                <th>Last check</th>
+                <th>All updates</th>
+                <th>Security</th>
+                <th>State</th>
+                <th>Warning</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for node in node_reports %}
+                {% set sec_pkgs = node.updates | selectattr('is_security') | list %}
+                {% set row_id = 'sec-' ~ loop.index %}
+                <tr class="{% if node.security_updates > 0 %}security-row{% endif %}">
+                  <td>
+                    <strong>{{ node.hostname }}</strong>
+                    <span class="node-meta">{{ node.node_id }}{% if node.is_local %} (local){% endif %}</span>
+                  </td>
+                  <td>{{ node.checked_at }}</td>
+                  <td>{{ node.all_updates }}</td>
+                  <td>
+                    {% if node.security_updates > 0 %}
+                      <button class="badge error badge-toggle" data-target="{{ row_id }}" aria-expanded="false">
+                        {{ node.security_updates }} security &#9660;
+                      </button>
+                    {% else %}
+                      <span class="badge idle">0 security</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if node.stale %}
+                      <span class="badge warn">stale</span>
+                    {% else %}
+                      <span class="badge idle">fresh</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if node.warning %}
+                      <span class="warn-text">{{ node.warning }}</span>
+                    {% else %}
+                      <span class="muted">none</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% if sec_pkgs %}
+                  <tr id="{{ row_id }}" class="sec-detail" hidden>
+                    <td colspan="6">
+                      <table class="table sec-inner">
+                        <thead>
+                          <tr>
+                            <th>Package</th>
+                            <th>Current</th>
+                            <th>Available</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {% for pkg in sec_pkgs %}
+                            <tr class="security-row">
+                              <td>{{ pkg.name }}</td>
+                              <td>{{ pkg.old_version }}</td>
+                              <td>{{ pkg.new_version }}</td>
+                            </tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                {% endif %}
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="empty">No node reports received yet.</p>
+        {% endif %}
+      </section>
+
+    </main>
+    <script>
+      document.querySelectorAll('.badge-toggle').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var target = document.getElementById(btn.dataset.target);
+          if (!target) return;
+          var expanded = btn.getAttribute('aria-expanded') === 'true';
+          target.hidden = expanded;
+          btn.setAttribute('aria-expanded', String(!expanded));
+          btn.innerHTML = btn.innerHTML.replace(expanded ? '&#9650;' : '&#9660;', expanded ? '&#9660;' : '&#9650;');
+        });
+      });
+    </script>
+  </body>
+</html>
